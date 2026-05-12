@@ -1,0 +1,2 @@
+Best Model,Evaluation Set,Holdout_Size,Accuracy (point),Accuracy 95% CI,Accuracy p-value,Precision (point),Precision 95% CI,Precision p-value,Recall (point),Recall 95% CI,Recall p-value,F1-Score (point),F1-Score 95% CI,F1-Score p-value,ROC-AUC (point),ROC-AUC 95% CI,ROC-AUC p-value
+Logistic Regression,30% Hold-out Validation Set,720,0.9430555555555555,"[0.9235, 0.9583]",0.005,0.920844327176781,"[0.8924, 0.9449]",0.005,0.9694444444444444,"[0.9468, 0.9852]",0.005,0.9445196211096076,"[0.9252, 0.9600]",0.005,0.9854668209876544,"[0.9778, 0.9919]",0.005

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Email spam score (local model)</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="head">
+      <h1>Spam likelihood</h1>
+      <p class="sub">
+        Paste an email body below. Inference uses <code>model.json</code>
+        (TF-IDF + logistic weights exported by <code>python main.py</code>
+        from the same run as <code>result/best_model.pkl</code>). Browsers
+        cannot read <code>.pkl</code> directly; the JSON is the portable
+        equivalent for this page.
+      </p>
+      <p class="warn" id="srv-hint">
+        If you open this page as a local file (<code>file://</code>), pick
+        <code>web/model.json</code> below. If you host the <code>web/</code>
+        folder on any static URL, <code>model.json</code> loads automatically.
+      </p>
+      <div class="model-load row" id="model-load-row">
+        <label class="file-btn">
+          <input type="file" id="model-file" accept=".json,application/json" />
+          <span>Load model.json</span>
+        </label>
+        <span class="muted small">Use when not served over HTTP, or to swap models.</span>
+      </div>
+    </header>
+
+    <section class="panel">
+      <label for="email">Email text</label>
+      <textarea id="email" rows="12" placeholder="Paste message here…"></textarea>
+      <div class="row">
+        <button type="button" id="analyze">Score &amp; explain</button>
+        <span id="status" class="status" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <section class="panel muted" id="result-block" hidden>
+      <h2>Results</h2>
+      <div class="scores">
+        <div>
+          <span class="lbl">P(spam)</span>
+          <strong id="prob">—</strong>
+        </div>
+        <div>
+          <span class="lbl">Inference</span>
+          <span id="inf-mode">—</span>
+        </div>
+        <div>
+          <span class="lbl">CV-best model</span>
+          <span id="best-cv">—</span>
+        </div>
+      </div>
+      <p id="infer-note" class="note"></p>
+      <div class="meter-outer"><div class="meter" id="meter"></div></div>
+      <h3>Tokens seen by the model (highlight = contribution)</h3>
+      <p class="legend">
+        <span class="leg ham">Bluish</span>
+        lowers spam log-odds;
+        <span class="leg spam">reddish</span>
+        raises spam log-odds. Intensity scales with approximate share of weighted TF-IDF mass.
+      </p>
+      <div id="token-view" class="token-view"></div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
