@@ -1,8 +1,17 @@
 /**
  * Spam scoring in the browser — TF-IDF (train-time settings) + logistic weights.
+ * Model weights load from a fixed path next to this page (see MODEL_JSON_PATH).
  */
 
+/** Fixed path: same directory as index.html (deploy web/model.json alongside this file). */
+const MODEL_JSON_PATH = "model.json";
+
 let MODEL = null;
+
+function setAnalyzeEnabled(enabled) {
+  const btn = document.getElementById("analyze");
+  if (btn) btn.disabled = !enabled;
+}
 
 function validateModel(obj) {
   if (!obj || typeof obj !== "object") return "Invalid JSON (expected an object).";
@@ -23,10 +32,12 @@ function applyModel(obj) {
   if (err) {
     st.textContent = err;
     MODEL = null;
+    setAnalyzeEnabled(false);
     return false;
   }
   MODEL = obj;
-  st.textContent = "Model loaded.";
+  st.textContent = "Model ready.";
+  setAnalyzeEnabled(true);
   return true;
 }
 
@@ -40,51 +51,20 @@ function escHtml(s) {
 
 async function loadModel() {
   const st = document.getElementById("status");
-  const fileProto = location.protocol === "file:";
-
-  if (!fileProto) {
-    try {
-      const r = await fetch("model.json", { cache: "no-store" });
-      if (r.ok) {
-        const obj = await r.json();
-        if (applyModel(obj)) return true;
-      }
-    } catch (e) {
-      console.warn(e);
-    }
+  setAnalyzeEnabled(false);
+  st.textContent = "Loading model…";
+  try {
+    const r = await fetch(MODEL_JSON_PATH, { cache: "no-store" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const obj = await r.json();
+    if (applyModel(obj)) return true;
+  } catch (e) {
+    console.error(e);
+    st.textContent =
+      `Could not load ${MODEL_JSON_PATH}. Serve the web folder over HTTP (e.g. python -m http.server) so the file can be fetched.`;
+    MODEL = null;
   }
-
-  st.textContent = fileProto
-    ? "Local file page — click “Load model.json” and select web/model.json (from python main.py)."
-    : "Could not fetch model.json — click “Load model.json” or host this folder over HTTP.";
   return false;
-}
-
-function wireModelFileInput() {
-  const inp = document.getElementById("model-file");
-  if (!inp) return;
-  inp.addEventListener("change", () => {
-    const f = inp.files && inp.files[0];
-    if (!f) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const obj = JSON.parse(String(reader.result));
-        applyModel(obj);
-      } catch (e) {
-        document.getElementById("status").textContent =
-          "Could not parse JSON — choose the model.json exported by main.py.";
-        console.error(e);
-        MODEL = null;
-      }
-    };
-    reader.onerror = () => {
-      document.getElementById("status").textContent = "Failed to read file.";
-      MODEL = null;
-    };
-    reader.readAsText(f, "UTF-8");
-    inp.value = "";
-  });
 }
 
 function cleanText(raw, stopWords) {
@@ -198,21 +178,21 @@ function intensityMap(contribMap) {
 function renderTokens(tokens, contribMap, intenMap) {
   const el = document.getElementById("token-view");
   if (!tokens.length) {
-    el.innerHTML = `<em>(No tokens left after preprocessing — URL/NUM placeholders and stop-word removal)</em>`;
+    el.innerHTML = `<em class="token-empty">No tokens left after preprocessing (URL/number placeholders and stop-word removal).</em>`;
     return;
   }
   const parts = tokens.map((tok) => {
     const signed = contribMap.get(tok) || 0;
     const intenRaw = intenMap.get(tok) ?? 0;
-    const amp = Math.min(0.5, 0.12 + intenRaw * 0.45);
+    const amp = Math.min(0.55, 0.1 + intenRaw * 0.5);
     let bg;
     let border;
     if (signed >= 0) {
-      bg = `rgba(239, 68, 68, ${amp.toFixed(3)})`;
-      border = `rgba(248, 113, 113, 0.5)`;
+      bg = `rgba(220, 38, 38, ${amp.toFixed(3)})`;
+      border = `rgba(248, 113, 113, 0.45)`;
     } else {
-      bg = `rgba(59, 130, 246, ${amp.toFixed(3)})`;
-      border = `rgba(147, 197, 253, 0.45)`;
+      bg = `rgba(37, 99, 235, ${amp.toFixed(3)})`;
+      border = `rgba(147, 197, 253, 0.5)`;
     }
     const title = `${tok}: contribution (logit) ${signed >= 0 ? "+" : ""}${signed.toFixed(4)}`;
     const titEsc = escHtml(title).replace(/"/g, "&quot;");
@@ -239,11 +219,15 @@ function runAnalyze() {
   document.getElementById("inf-mode").textContent = MODEL.inference_mode;
   document.getElementById("best-cv").textContent = MODEL.best_model_cv;
   document.getElementById("infer-note").textContent = MODEL.note || "";
-  document.getElementById("result-block").hidden = false;
+
+  const ph = document.getElementById("output-placeholder");
+  const rb = document.getElementById("result-block");
+  if (ph) ph.hidden = true;
+  if (rb) rb.hidden = false;
+
   renderTokens(tokens, contrib, inten);
 }
 
 document.getElementById("analyze").addEventListener("click", runAnalyze);
 
-wireModelFileInput();
 loadModel();
