@@ -1,5 +1,6 @@
 /**
  * Spam scoring in the browser — TF-IDF (train-time settings) + logistic weights.
+<<<<<<< HEAD
  * Model weights load from a fixed path next to this page (see MODEL_JSON_PATH).
  */
 
@@ -41,6 +42,12 @@ function applyModel(obj) {
   return true;
 }
 
+=======
+ */
+
+let MODEL = null;
+
+>>>>>>> c4ade16f2ff66f8c6121d14d77025876449c0ab8
 function escHtml(s) {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -51,6 +58,7 @@ function escHtml(s) {
 
 async function loadModel() {
   const st = document.getElementById("status");
+<<<<<<< HEAD
   setAnalyzeEnabled(false);
   st.textContent = "Loading model…";
   try {
@@ -65,6 +73,20 @@ async function loadModel() {
     MODEL = null;
   }
   return false;
+=======
+  try {
+    const r = await fetch("model.json", { cache: "no-store" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    MODEL = await r.json();
+    st.textContent = "Model loaded.";
+    return true;
+  } catch (e) {
+    st.textContent =
+      "Could not load model.json — use a local HTTP server from the web/ folder.";
+    console.error(e);
+    return false;
+  }
+>>>>>>> c4ade16f2ff66f8c6121d14d77025876449c0ab8
 }
 
 function cleanText(raw, stopWords) {
@@ -178,12 +200,17 @@ function intensityMap(contribMap) {
 function renderTokens(tokens, contribMap, intenMap) {
   const el = document.getElementById("token-view");
   if (!tokens.length) {
+<<<<<<< HEAD
     el.innerHTML = `<em class="token-empty">No tokens left after preprocessing (URL/number placeholders and stop-word removal).</em>`;
+=======
+    el.innerHTML = `<em>(No tokens left after preprocessing — URL/NUM placeholders and stop-word removal)</em>`;
+>>>>>>> c4ade16f2ff66f8c6121d14d77025876449c0ab8
     return;
   }
   const parts = tokens.map((tok) => {
     const signed = contribMap.get(tok) || 0;
     const intenRaw = intenMap.get(tok) ?? 0;
+<<<<<<< HEAD
     const amp = Math.min(0.55, 0.1 + intenRaw * 0.5);
     let bg;
     let border;
@@ -193,6 +220,17 @@ function renderTokens(tokens, contribMap, intenMap) {
     } else {
       bg = `rgba(37, 99, 235, ${amp.toFixed(3)})`;
       border = `rgba(147, 197, 253, 0.5)`;
+=======
+    const amp = Math.min(0.5, 0.12 + intenRaw * 0.45);
+    let bg;
+    let border;
+    if (signed >= 0) {
+      bg = `rgba(239, 68, 68, ${amp.toFixed(3)})`;
+      border = `rgba(248, 113, 113, 0.5)`;
+    } else {
+      bg = `rgba(59, 130, 246, ${amp.toFixed(3)})`;
+      border = `rgba(147, 197, 253, 0.45)`;
+>>>>>>> c4ade16f2ff66f8c6121d14d77025876449c0ab8
     }
     const title = `${tok}: contribution (logit) ${signed >= 0 ? "+" : ""}${signed.toFixed(4)}`;
     const titEsc = escHtml(title).replace(/"/g, "&quot;");
@@ -219,12 +257,16 @@ function runAnalyze() {
   document.getElementById("inf-mode").textContent = MODEL.inference_mode;
   document.getElementById("best-cv").textContent = MODEL.best_model_cv;
   document.getElementById("infer-note").textContent = MODEL.note || "";
+<<<<<<< HEAD
 
   const ph = document.getElementById("output-placeholder");
   const rb = document.getElementById("result-block");
   if (ph) ph.hidden = true;
   if (rb) rb.hidden = false;
 
+=======
+  document.getElementById("result-block").hidden = false;
+>>>>>>> c4ade16f2ff66f8c6121d14d77025876449c0ab8
   renderTokens(tokens, contrib, inten);
 }
 

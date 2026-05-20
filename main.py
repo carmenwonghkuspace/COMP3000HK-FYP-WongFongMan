@@ -693,7 +693,11 @@ Artifacts (result/):
   Tables: table1–table6 (.csv), final_summary.csv
   Processed: processed_tfidf.csv, processed_tfidf_sparse.npz
   Models: best_model.pkl, best_model_only.pkl, tfidf_vectorizer.pkl
+<<<<<<< HEAD
   Web demo: web/model.json + web/index.html (serve web/ over HTTP to load JSON)
+=======
+  Web demo: web/model.json + open web/index.html via a local server
+>>>>>>> c4ade16f2ff66f8c6121d14d77025876449c0ab8
 
 Speed: default FAST_RUN=1. Heavier run: FAST_RUN=0 python main.py
 """)
