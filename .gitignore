@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Raw data (large; download with data pulling.ipynb)
+datasets/
+
+# Bulky regenerated training artifacts
+result/processed_tfidf.csv
+result/processed_tfidf_sparse.npz
+result/*.pkl
+result/tfidf_vectorizer.pkl
+
+# Local conda / history rewrite tooling
+.conda/
+.git-rewrite/
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Secrets & local config
+.env
+.env.*
