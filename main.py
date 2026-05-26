@@ -3,6 +3,7 @@ import pandas as pd
 
 # FAST_RUN=1 (default): ~minutes. Use FAST_RUN=0 for heavier paper-style budgets.
 FAST_RUN = os.environ.get("FAST_RUN", "1").strip().lower() not in ("0", "false", "no")
+TUNE_MODELS = os.environ.get("TUNE_MODELS", "1").strip().lower() not in ("0", "false", "no")
 SAMPLE_PER_CLASS = 1200 if FAST_RUN else 4000
 
 df = pd.read_csv('datasets/data.csv')
@@ -40,7 +41,9 @@ RESULT_DIR = _PROJECT_ROOT / "result"
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
 from sklearn.model_selection import (StratifiedKFold, cross_validate,
-                                     train_test_split, permutation_test_score)
+                                     train_test_split, permutation_test_score,
+                                     GridSearchCV, RandomizedSearchCV)
+from scipy.stats import randint, uniform
 from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
 from functools import partial
 from sklearn.linear_model import LogisticRegression
@@ -112,6 +115,8 @@ if FAST_RUN:
     SHAP_MAX_ROWS = 900
     RF_N_EST = 120
     XGB_N_EST = 150
+    TUNE_RF_ITER = 12
+    TUNE_XGB_ITER = 14
 else:
     N_BOOTSTRAP = 300
     N_PERMUT_CV = 48
@@ -120,6 +125,8 @@ else:
     SHAP_MAX_ROWS = 2000
     RF_N_EST = 300
     XGB_N_EST = 400
+    TUNE_RF_ITER = 32
+    TUNE_XGB_ITER = 40
 
 if "N_JOBS_CV" in os.environ:
     N_JOBS_CV = int(os.environ["N_JOBS_CV"])
@@ -129,7 +136,8 @@ else:
     N_JOBS_CV = max(1, min((os.cpu_count() or 4), 8))
 
 print(
-    f"\n>>> Run profile: FAST_RUN={FAST_RUN} | per-class sample cap={SAMPLE_PER_CLASS} "
+    f"\n>>> Run profile: FAST_RUN={FAST_RUN} | TUNE_MODELS={TUNE_MODELS} "
+    f"| per-class sample cap={SAMPLE_PER_CLASS} "
     f"| folds={CV_N_SPLITS} | CV permutations(F1)={N_PERMUT_CV} | bootstrap={N_BOOTSTRAP}"
 )
 print(f"    Parallel CV/permutation splits: n_jobs={N_JOBS_CV} (env N_JOBS_CV overrides; use 1 on GPU if OOM)")
@@ -234,23 +242,161 @@ print(f"Saved: {RESULT_DIR / 'processed_tfidf_sparse.npz'} (sparse)")
 joblib.dump(tfidf, RESULT_DIR / "tfidf_vectorizer.pkl")
 print(f"Saved: {RESULT_DIR / 'tfidf_vectorizer.pkl'}")
 
+cv = StratifiedKFold(n_splits=CV_N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
+
 # =============================================================================
-# 5. Models
+# 5. Hyperparameter optimization (train split only; inner stratified CV)
 # =============================================================================
-models = {
-    "Logistic Regression": LogisticRegression(max_iter=2000, C=1.0,
-                                              solver='liblinear',
-                                              random_state=RANDOM_STATE),
-    "Random Forest"     : RandomForestClassifier(n_estimators=RF_N_EST,
-                                                 n_jobs=1,
-                                                 random_state=RANDOM_STATE),
-    "XGBoost"           : XGBClassifier(n_estimators=XGB_N_EST, max_depth=6,
-                                        learning_rate=0.1,
-                                        use_label_encoder=False,
-                                        eval_metric='logloss',
-                                        random_state=RANDOM_STATE,
-                                        **XGB_DEVICE_KW),
-}
+def _default_models():
+    """Baseline estimators when TUNE_MODELS=0."""
+    return {
+        "Logistic Regression": LogisticRegression(
+            max_iter=2000, C=1.0, solver="liblinear", random_state=RANDOM_STATE
+        ),
+        "Random Forest": RandomForestClassifier(
+            n_estimators=RF_N_EST, n_jobs=1, random_state=RANDOM_STATE
+        ),
+        "XGBoost": XGBClassifier(
+            n_estimators=XGB_N_EST,
+            max_depth=6,
+            learning_rate=0.1,
+            use_label_encoder=False,
+            eval_metric="logloss",
+            random_state=RANDOM_STATE,
+            **XGB_DEVICE_KW,
+        ),
+    }
+
+
+def _param_search_spaces():
+    lr_grid = {
+        "C": [0.01, 0.1, 1.0, 10.0] if FAST_RUN else [0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
+        "penalty": ["l1", "l2"],
+    }
+    rf_dist = {
+        "n_estimators": randint(80, 220) if FAST_RUN else randint(150, 450),
+        "max_depth": [None, 12, 24, 36] if FAST_RUN else [None, 16, 32, 48],
+        "min_samples_split": [2, 5, 10],
+        "min_samples_leaf": [1, 2, 4],
+        "max_features": ["sqrt", "log2", 0.3],
+    }
+    xgb_dist = {
+        "n_estimators": randint(80, 180) if FAST_RUN else randint(200, 500),
+        "max_depth": [4, 6, 8],
+        "learning_rate": uniform(0.03, 0.17) if FAST_RUN else uniform(0.02, 0.23),
+        "subsample": [0.7, 0.85, 1.0],
+        "colsample_bytree": [0.6, 0.8, 1.0],
+        "reg_lambda": [0.1, 1.0, 10.0],
+        "reg_alpha": [0.0, 0.1, 1.0],
+    }
+    return lr_grid, rf_dist, xgb_dist
+
+
+def _tune_jobs_for(estimator):
+    if isinstance(estimator, XGBClassifier) and str(
+        XGB_DEVICE_KW.get("device", "")
+    ).lower() == "cuda":
+        return 1
+    return N_JOBS_CV
+
+
+def tune_estimator(name, estimator, param_space, *, method="random", n_iter=12):
+    """Inner CV on training data; refit best estimator on full train matrix."""
+    jobs = _tune_jobs_for(estimator)
+    if method == "grid":
+        search = GridSearchCV(
+            estimator,
+            param_space,
+            cv=cv,
+            scoring="f1",
+            refit=True,
+            n_jobs=jobs,
+        )
+        n_candidates = int(np.prod([len(v) for v in param_space.values()]))
+    else:
+        search = RandomizedSearchCV(
+            estimator,
+            param_space,
+            n_iter=n_iter,
+            cv=cv,
+            scoring="f1",
+            refit=True,
+            n_jobs=jobs,
+            random_state=RANDOM_STATE,
+        )
+        n_candidates = n_iter
+
+    print(
+        f"\n>>> Tuning {name} ({method} search, {n_candidates} candidates, "
+        f"{CV_N_SPLITS}-fold CV, scoring=F1) ..."
+    )
+    search.fit(X_train_full, y_train_full)
+    best = search.best_estimator_
+    row = {
+        "Model": name,
+        "Search": method,
+        "Candidates": n_candidates,
+        "Best_CV_F1": f"{search.best_score_:.4f}",
+        "Best_Params": json.dumps(search.best_params_, sort_keys=True),
+    }
+    print(f"    Best CV F1: {search.best_score_:.4f}")
+    print(f"    Best params: {search.best_params_}")
+    return best, row
+
+
+lr_grid, rf_dist, xgb_dist = _param_search_spaces()
+tuning_rows = []
+best_params_by_model = {}
+
+if TUNE_MODELS:
+    print("\n" + "=" * 72)
+    print(">>> Hyperparameter optimization (70% train only; hold-out untouched)")
+    print("=" * 72)
+
+    lr_base = LogisticRegression(
+        max_iter=2000, solver="liblinear", random_state=RANDOM_STATE
+    )
+    tuned_lr, row_lr = tune_estimator(
+        "Logistic Regression", lr_base, lr_grid, method="grid"
+    )
+    tuning_rows.append(row_lr)
+    best_params_by_model["Logistic Regression"] = tuned_lr.get_params()
+
+    rf_base = RandomForestClassifier(n_jobs=1, random_state=RANDOM_STATE)
+    tuned_rf, row_rf = tune_estimator(
+        "Random Forest", rf_base, rf_dist, method="random", n_iter=TUNE_RF_ITER
+    )
+    tuning_rows.append(row_rf)
+    best_params_by_model["Random Forest"] = tuned_rf.get_params()
+
+    xgb_base = XGBClassifier(
+        use_label_encoder=False,
+        eval_metric="logloss",
+        random_state=RANDOM_STATE,
+        **XGB_DEVICE_KW,
+    )
+    tuned_xgb, row_xgb = tune_estimator(
+        "XGBoost", xgb_base, xgb_dist, method="random", n_iter=TUNE_XGB_ITER
+    )
+    tuning_rows.append(row_xgb)
+    best_params_by_model["XGBoost"] = tuned_xgb.get_params()
+
+    models = {
+        "Logistic Regression": tuned_lr,
+        "Random Forest": tuned_rf,
+        "XGBoost": tuned_xgb,
+    }
+
+    tuning_df = pd.DataFrame(tuning_rows)
+    print("\n=== Table 0. Hyperparameter tuning summary (inner CV, F1) ===")
+    print(tuning_df.to_string(index=False))
+    tuning_df.to_csv(RESULT_DIR / "table0_tuning_results.csv", index=False)
+    joblib.dump(best_params_by_model, RESULT_DIR / "best_hyperparameters.pkl")
+    print(f"Saved: {RESULT_DIR / 'table0_tuning_results.csv'}")
+    print(f"Saved: {RESULT_DIR / 'best_hyperparameters.pkl'}")
+else:
+    print("\n>>> TUNE_MODELS=0 — using default hyperparameters (no search).")
+    models = _default_models()
 
 # =============================================================================
 # 6. Statistics helpers: 95% CI + p-values
@@ -305,7 +451,6 @@ def permutation_pvalue(y_true, y_pred_or_proba, metric_fn, n_perm=499,
 # =============================================================================
 scoring = {'accuracy': 'accuracy', 'precision': 'precision',
            'recall': 'recall', 'f1': 'f1', 'roc_auc': 'roc_auc'}
-cv = StratifiedKFold(n_splits=CV_N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
 
 cv_results = []
 cv_raw_scores = {}
@@ -381,11 +526,15 @@ plt.savefig(RESULT_DIR / "fig2_model_comparison.png", bbox_inches='tight')
 plt.show()
 
 # =============================================================================
-# 8. Refit best model (by mean CV F1) on full train split
+# 8. Select best model (by mean CV F1 on tuned estimators) & refit on full train
 # =============================================================================
 best_name  = cv_df.iloc[0]["Model"]
 print(f"\n*** Best model by mean CV F1: {best_name} ***")
-best_model = models[best_name].fit(X_train_full, y_train_full)
+if TUNE_MODELS:
+    print("    (Hyperparameters already selected via inner CV tuning.)")
+best_model = models[best_name]
+if not hasattr(best_model, "classes_"):
+    best_model = best_model.fit(X_train_full, y_train_full)
 
 # =============================================================================
 # 9. Final evaluation on 30% hold-out (Bootstrap CI + label-shuffle p)
@@ -587,9 +736,14 @@ shap_rank.to_csv(RESULT_DIR / "table5_shap_importance.csv", index=False)
 # =============================================================================
 final_summary = {
     "Best Model"     : best_name,
+    "Hyperparameter Tuning": "Yes" if TUNE_MODELS else "No (defaults)",
     "Evaluation Set" : "30% Hold-out Validation Set",
     "Holdout_Size"   : len(y_holdout),
 }
+if TUNE_MODELS and best_name in best_params_by_model:
+    final_summary["Best_Params"] = json.dumps(
+        models[best_name].get_params(), sort_keys=True, default=str
+    )
 for row in holdout_rows:
     final_summary[f"{row['Metric']} (point)"]  = row["_point"]
     final_summary[f"{row['Metric']} 95% CI"]   = f"[{row['_lo']:.4f}, {row['_hi']:.4f}]"
@@ -606,6 +760,8 @@ model_bundle = {
     "model"          : best_model,
     "vectorizer"     : tfidf,
     "model_name"     : best_name,
+    "tuned"          : TUNE_MODELS,
+    "best_params"    : (models[best_name].get_params() if TUNE_MODELS else None),
     "feature_names"  : feature_names,
     "stop_words"     : list(STOP_WORDS),
     "random_state"   : RANDOM_STATE,
@@ -690,10 +846,11 @@ print("="*72)
 print("""
 Artifacts (result/):
   Figures: fig1–fig8 (.png)
-  Tables: table1–table6 (.csv), final_summary.csv
+  Tables: table0_tuning_results.csv (if TUNE_MODELS), table1–table6 (.csv), final_summary.csv
   Processed: processed_tfidf.csv, processed_tfidf_sparse.npz
   Models: best_model.pkl, best_model_only.pkl, tfidf_vectorizer.pkl
   Web demo: web/model.json + web/index.html (serve web/ over HTTP to load JSON)
 
 Speed: default FAST_RUN=1. Heavier run: FAST_RUN=0 python main.py
+Tuning: default TUNE_MODELS=1. Skip search: TUNE_MODELS=0 python main.py
 """)

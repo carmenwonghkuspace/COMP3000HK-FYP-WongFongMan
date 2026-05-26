@@ -2,24 +2,27 @@
 """
 Build web/model.json from result/best_model.pkl without re-running main.py.
 
-The browser only understands the TF-IDF + logistic JSON pack (same schema as
-main.py writes). Arbitrary sklearn/joblib objects cannot be dumped to JSON as-is.
-
-- If the bundled model is LogisticRegression: only the .pkl is required.
-- If it is RF / XGBoost / etc.: main.py fits a logistic surrogate on the training
-  TF-IDF matrix; this script needs result/processed_tfidf.csv (from the same
-  main.py run that produced the .pkl) to reproduce that surrogate.
+Run from the repository root, e.g.:
+  python scripts/export_browser_json_from_pkl.py
 """
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
+
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+_ROOT = _SCRIPTS_DIR.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from project_paths import RESULT_DIR, WEB_DIR  # noqa: E402
 
 KEEP_TOKENS = {"url", "num"}
 
@@ -94,13 +97,15 @@ def build_browser_pack(bundle: dict, processed_csv: Path | None) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--pkl", type=Path, default=Path("result/best_model.pkl"))
-    ap.add_argument("--out-web", type=Path, default=Path("web/model.json"))
-    ap.add_argument("--out-result", type=Path, default=Path("result/browser_model.json"))
+    ap.add_argument("--pkl", type=Path, default=RESULT_DIR / "best_model.pkl")
+    ap.add_argument("--out-web", type=Path, default=WEB_DIR / "model.json")
+    ap.add_argument(
+        "--out-result", type=Path, default=RESULT_DIR / "browser_model.json"
+    )
     ap.add_argument(
         "--processed-csv",
         type=Path,
-        default=Path("result/processed_tfidf.csv"),
+        default=RESULT_DIR / "processed_tfidf.csv",
         help="Training TF-IDF rows (needed only when the CV winner is not LogisticRegression).",
     )
     args = ap.parse_args()
