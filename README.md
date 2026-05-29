@@ -25,9 +25,9 @@ Machine-learning pipeline for **spam vs ham** email classification: TF-IDF featu
 
 ---
 
-## 專案簡介
+## Project Overview
 
-本專案比較 Logistic Regression、Random Forest、XGBoost，在訓練集上做超參數搜尋，再以交叉驗證及 30% hold-out 評估，並輸出報告用圖表與可在瀏覽器運行的 Web 介面。原始電郵 CSV 體積大，不會放入 Git；clone 後請自行下載至 `datasets/`。
+This project compares Logistic Regression, Random Forest, and XGBoost by performing hyperparameter tuning on the training set, then evaluating the models using cross-validation and a 30% hold-out split. It also generates visual charts for the report and includes a browser-based web interface for interactive use. The original email CSV dataset is large and is therefore not included in Git; after cloning the repository, please download it into `datasets/`.
 
 ---
 
